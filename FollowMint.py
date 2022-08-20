@@ -9,7 +9,7 @@ from eth_abi import decode_abi
 import os
 
 configExample = {
-    "RPC": "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161",
+    "RPC": ["rpc1", "rpc2"],
     "privateKey": ["私钥1", "私钥2"],
     "blocknativeKey": "监控平台key",
     "barkKey": "IOS推送软件key",
@@ -175,7 +175,7 @@ def getgas():
         return baseFee, maxFeePerGas, maxPriorityFeePerGas
 
 
-def minttx(_account, _privateKey, _inputData, _method, _from_address, _to_address, _maxFeePerGas, _maxPriorityFeePerGas, _value, _gasLimit):
+def minttx(client, _account, _privateKey, _inputData, _method, _from_address, _to_address, _maxFeePerGas, _maxPriorityFeePerGas, _value, _gasLimit):
     try:
         abi = _method.split('(')[1][:-1].split(',')
         if len(abi) != 0 and 'address' in abi:
@@ -190,38 +190,39 @@ def minttx(_account, _privateKey, _inputData, _method, _from_address, _to_addres
             'gas': _gasLimit,
             'maxFeePerGas': _maxFeePerGas,
             'maxPriorityFeePerGas': _maxPriorityFeePerGas,
-            'nonce': w3.eth.getTransactionCount(_account.address),
+            'nonce': client.eth.getTransactionCount(_account.address),
             'data': _inputData,
             'value': _value
         }
         try:
-            estimateGas = w3.eth.estimateGas(transaction)
+            estimateGas = client.eth.estimateGas(transaction)
             if estimateGas > _gasLimit:
                 transaction['gas'] = int(estimateGas * 1.2)
         except Exception as e:
             if 'allowance' not in str(e):
                 print_color('发送交易失败:' + str(e), 'red')
                 return
-        signed = w3.eth.account.sign_transaction(transaction, _privateKey)
+        print_color(transaction, 'blue')
+        signed = client.eth.account.sign_transaction(transaction, _privateKey)
         new_raw = signed.rawTransaction.hex()
-        tx_hash = w3.eth.sendRawTransaction(new_raw)
-        print_color("mint交易发送成功" + w3.toHex(tx_hash), 'green')
-        freceipt = w3.eth.waitForTransactionReceipt(tx_hash, 600)
+        tx_hash = client.eth.sendRawTransaction(new_raw)
+        print_color("mint交易发送成功" + client.toHex(tx_hash), 'green')
+        freceipt = client.eth.waitForTransactionReceipt(tx_hash, 600)
         if freceipt.status == 1:
             try:
                 ETHused = freceipt.effectiveGasPrice * freceipt.gasUsed
-                ETHused = float(w3.fromWei(ETHused, 'ether'))
+                ETHused = float(client.fromWei(ETHused, 'ether'))
                 USDuse = ETHPrice * ETHused
                 ETHusedinfo = '本次mint：' + str(USDuse) + ' U'
             except:
                 ETHusedinfo = ''
             print_color("mint成功   " + ETHusedinfo, 'green')
-            bark('mint成功', 'https://cn.etherscan.com/tx/' + w3.toHex(tx_hash))
+            bark('mint成功', 'https://cn.etherscan.com/tx/' + client.toHex(tx_hash))
         else:
             print_color("mint失败", 'red')
             if _to_address in mintadd:
                 mintadd.remove(_to_address)
-            bark('mint失败', 'https://cn.etherscan.com/tx/' + w3.toHex(tx_hash))
+            bark('mint失败', 'https://cn.etherscan.com/tx/' + client.toHex(tx_hash))
     except Exception as e:
         if _to_address in mintadd:
             mintadd.remove(_to_address)
@@ -236,6 +237,9 @@ async def txn_handler(txn, unsubscribe):
     inputData = txn['input']
     value = int(txn['value'])
     gasLimit = int(txn['gas'])
+    print_color(from_address + "监控到新交易", 'yellow')
+    print_color("contract: " + to_address, 'yellow')
+    print_color(txn, 'yellow')
     tx_maxFeePerGas, tx_maxPriorityFeePerGas = 0, 0
     if 'maxFeePerGas' in txn:
         tx_maxFeePerGas = int(txn['maxFeePerGas'])
@@ -266,7 +270,9 @@ async def txn_handler(txn, unsubscribe):
         maxFeePerGas = gasPrice + maxPriorityFeePerGas
     mintadd.append(to_address)
     for index in range(len(accounts)):
-        threading.Thread(target=minttx, args=(accounts[index], privateKeys[index], inputData, method, from_address, to_address, maxFeePerGas, maxPriorityFeePerGas, value, gasLimit)).start()
+        totalRpc = len(RPC)
+        client = Web3(Web3.HTTPProvider(RPC[index%totalRpc]))
+        threading.Thread(target=minttx, args=(client, accounts[index], privateKeys[index], inputData, method, from_address, to_address, maxFeePerGas, maxPriorityFeePerGas, value, gasLimit)).start()
 
 
 def main():
@@ -316,7 +322,7 @@ if __name__ == '__main__':
             'stateMutability': 'view',
             'type': 'function'
         }
-        w3 = Web3(Web3.HTTPProvider(RPC))
+        w3 = Web3(Web3.HTTPProvider(RPC[0]))
         maxGasPrice = config['maxGasPrice']
         maxGasPrice = w3.toWei(maxGasPrice, 'gwei')
         maxGasLimit = int(config['maxGasLimit'])
